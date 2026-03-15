@@ -8,15 +8,25 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { startTestServer } from './test-server';
 import { BrowserManager } from '../src/browser-manager';
-import { handleReadCommand } from '../src/read-commands';
-import { handleWriteCommand } from '../src/write-commands';
-import { handleMetaCommand } from '../src/meta-commands';
+import { handleReadCommand as handleReadCommandRaw } from '../src/read-commands';
+import { handleWriteCommand as handleWriteCommandRaw } from '../src/write-commands';
+import { handleMetaCommand as handleMetaCommandRaw } from '../src/meta-commands';
 import * as fs from 'fs';
+import { normalizePromise } from './test-message-normalizer';
 
 let testServer: ReturnType<typeof startTestServer>;
 let bm: BrowserManager;
 let baseUrl: string;
 const shutdown = async () => {};
+
+const handleReadCommand = (...args: Parameters<typeof handleReadCommandRaw>) =>
+  normalizePromise(handleReadCommandRaw(...args));
+
+const handleWriteCommand = (...args: Parameters<typeof handleWriteCommandRaw>) =>
+  normalizePromise(handleWriteCommandRaw(...args));
+
+const handleMetaCommand = (...args: Parameters<typeof handleMetaCommandRaw>) =>
+  normalizePromise(handleMetaCommandRaw(...args));
 
 beforeAll(async () => {
   testServer = startTestServer(0);
@@ -113,7 +123,7 @@ describe('Ref resolution', () => {
     expect(refMatch).toBeDefined();
     const ref = `@${refMatch![1]}`;
     const result = await handleWriteCommand('click', [ref], bm);
-    expect(result).toContain('Clicked');
+    expect(result).toMatch(/クリックしました|Clicked/);
   });
 
   test('fill @ref works after snapshot', async () => {
@@ -126,7 +136,7 @@ describe('Ref resolution', () => {
     expect(refMatch).toBeDefined();
     const ref = `@${refMatch![1]}`;
     const result = await handleWriteCommand('fill', [ref, 'testuser'], bm);
-    expect(result).toContain('Filled');
+    expect(result).toMatch(/入力しました|Filled/);
   });
 
   test('hover @ref works after snapshot', async () => {
@@ -137,7 +147,7 @@ describe('Ref resolution', () => {
     const refMatch = linkLine!.match(/@(e\d+)/);
     const ref = `@${refMatch![1]}`;
     const result = await handleWriteCommand('hover', [ref], bm);
-    expect(result).toContain('Hovered');
+    expect(result).toMatch(/ホバーしました|Hovered/);
   });
 
   test('html @ref returns innerHTML', async () => {
@@ -186,7 +196,7 @@ describe('Ref invalidation', () => {
       await handleWriteCommand('click', ['@e1'], bm);
       expect(true).toBe(false); // Should not reach here
     } catch (err: any) {
-      expect(err.message).toContain('not found');
+      expect(err.message).toMatch(/見つかりません|not found/);
       expect(err.message).toContain('snapshot');
     }
   });
@@ -209,8 +219,8 @@ describe('Snapshot diff', () => {
     bm.setLastSnapshot(null);
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const result = await handleMetaCommand('snapshot', ['-D'], bm, shutdown);
-    expect(result).toContain('no previous snapshot');
-    expect(result).toContain('baseline');
+    expect(result).toMatch(/比較対象の前回 snapshot がない|no previous snapshot/i);
+    expect(result).toMatch(/ベースライン|baseline/i);
   });
 
   test('snapshot -D shows diff after change', async () => {
@@ -223,8 +233,8 @@ describe('Snapshot diff', () => {
     const diff = await handleMetaCommand('snapshot', ['-D'], bm, shutdown);
     expect(diff).toContain('---');
     expect(diff).toContain('+++');
-    expect(diff).toContain('previous snapshot');
-    expect(diff).toContain('current snapshot');
+    expect(diff).toMatch(/前回 snapshot|previous snapshot/i);
+    expect(diff).toMatch(/現在 snapshot|current snapshot/i);
   });
 
   test('snapshot -D with identical page shows no changes', async () => {
@@ -246,7 +256,7 @@ describe('Annotated screenshots', () => {
     const screenshotPath = '/tmp/browse-test-annotated.png';
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const result = await handleMetaCommand('snapshot', ['-a', '-o', screenshotPath], bm, shutdown);
-    expect(result).toContain('annotated screenshot');
+    expect(result).toMatch(/注釈付きスクリーンショット|annotated screenshot/i);
     expect(result).toContain(screenshotPath);
     expect(fs.existsSync(screenshotPath)).toBe(true);
     const stat = fs.statSync(screenshotPath);
@@ -258,7 +268,7 @@ describe('Annotated screenshots', () => {
     const defaultPath = '/tmp/browse-annotated.png';
     await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
     const result = await handleMetaCommand('snapshot', ['-a'], bm, shutdown);
-    expect(result).toContain('annotated screenshot');
+    expect(result).toMatch(/注釈付きスクリーンショット|annotated screenshot/i);
     expect(fs.existsSync(defaultPath)).toBe(true);
     fs.unlinkSync(defaultPath);
   });
@@ -269,7 +279,7 @@ describe('Annotated screenshots', () => {
     const result = await handleMetaCommand('snapshot', ['-i', '-a', '-o', screenshotPath], bm, shutdown);
     expect(result).toContain('[button]');
     expect(result).toContain('[link]');
-    expect(result).toContain('annotated screenshot');
+    expect(result).toMatch(/注釈付きスクリーンショット|annotated screenshot/i);
     if (fs.existsSync(screenshotPath)) fs.unlinkSync(screenshotPath);
   });
 
@@ -316,7 +326,7 @@ describe('Cursor-interactive', () => {
       const refMatch = cLine.match(/@(c\d+)/);
       if (refMatch) {
         const result = await handleWriteCommand('click', [`@${refMatch[1]}`], bm);
-        expect(result).toContain('Clicked');
+        expect(result).toMatch(/クリックしました|Clicked/);
       }
     }
   });
@@ -347,7 +357,7 @@ describe('Snapshot errors', () => {
       await handleMetaCommand('snapshot', ['--bogus'], bm, shutdown);
       expect(true).toBe(false);
     } catch (err: any) {
-      expect(err.message).toContain('Unknown snapshot flag');
+      expect(err.message).toMatch(/未知の snapshot フラグです|Unknown snapshot flag/);
     }
   });
 
@@ -356,7 +366,7 @@ describe('Snapshot errors', () => {
       await handleMetaCommand('snapshot', ['-d'], bm, shutdown);
       expect(true).toBe(false);
     } catch (err: any) {
-      expect(err.message).toContain('Usage');
+      expect(err.message).toMatch(/使い方|Usage/);
     }
   });
 
@@ -365,7 +375,7 @@ describe('Snapshot errors', () => {
       await handleMetaCommand('snapshot', ['-s'], bm, shutdown);
       expect(true).toBe(false);
     } catch (err: any) {
-      expect(err.message).toContain('Usage');
+      expect(err.message).toMatch(/使い方|Usage/);
     }
   });
 
@@ -375,7 +385,7 @@ describe('Snapshot errors', () => {
       await handleMetaCommand('snapshot', ['-s', '#nonexistent-element-12345'], bm, shutdown);
       expect(true).toBe(false);
     } catch (err: any) {
-      expect(err.message).toContain('Selector not found');
+      expect(err.message).toMatch(/selector が見つかりません|Selector not found/);
     }
   });
 
@@ -384,7 +394,7 @@ describe('Snapshot errors', () => {
       await handleMetaCommand('snapshot', ['-o'], bm, shutdown);
       expect(true).toBe(false);
     } catch (err: any) {
-      expect(err.message).toContain('Usage');
+      expect(err.message).toMatch(/使い方|Usage/);
     }
   });
 });
